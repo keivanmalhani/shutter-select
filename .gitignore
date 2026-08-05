@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+
+# Secrets and local config
+.env
+.env.*
+
+# Model weights are never vendored (see MODEL_MANIFEST.json)
+models/
+
+# Tool output trees
+_selects/
+
+# OS noise
+.DS_Store
+._*
