@@ -12,12 +12,27 @@ the shoot looks like. Each hard fail carries a human-readable reason.
 Decide posture, same as shutter-cull: mark the clear picks and the clear
 rejects, leave the middle unmarked for human judgment.
 
-Small-group rule (not in the spec, logged in _hq/mistakes.md 2026-08-05):
-percentile thresholds are meaningless for tiny groups. A run with a single
-clean interview take must not bury it below the 60th-percentile bar the
-way shutter-cull's singleton bug buried no-burst shoots, so when a class
-has 3 or fewer segments every non-hard-fail segment is a Select and only
-hard fails Reject.
+Small-group rule (not in the spec, logged in _hq/mistakes.md 2026-08-05,
+revised by the 2026-08-05 Fable scoring review checkpoint): percentile
+thresholds are meaningless for tiny groups, and so is every other
+automatic verdict. The original build marked every clean segment of a
+small group Select, which reproduced the shutter-cull singleton failure
+with the sign flipped: a two-file shoot came back 100 percent Selected,
+terrible takes included. Relative decisions need comparative evidence, so
+a class with SMALL_GROUP_MAX or fewer segments now gets no percentile
+calls at all: hard fails still Reject, everything else is left unmarked
+with a reason telling the editor the group was too small to call. The
+one clean take is not buried; it is handed over undecided, which is the
+family's only honest option ("the tool makes the clear calls and leaves
+the middle to human judgment").
+
+Ties share a fate: percentile ranks are tie-averaged, because the same
+review reproduced twelve byte-identical segments being split into two
+rejects, five unmarked, and five selects purely by input order. With
+averaged ranks, identical rows get identical composites and identical
+decisions, and an all-tied group marks nobody. The bottom-decile reject
+is strictly below the threshold for the same reason, so
+reject_percentile=0.0 disables relative rejects entirely.
 """
 
 from __future__ import annotations
@@ -63,15 +78,30 @@ PROFILES = {
 
 
 def percentile_ranks(values: list[float]) -> list[float]:
-    """Rank positions scaled to 0..1. A single value ranks 0.5."""
+    """Rank positions scaled to 0..1, ties averaged. A single value ranks 0.5.
+
+    Ties must share a rank: without averaging, duplicate segments (the
+    same card imported twice, repeated static shots) are pushed to
+    arbitrary opposite fates by input order alone. Reproduced by the
+    2026-08-05 scoring review: twelve identical rows split into rejects
+    and selects. Averaged, they all land at 0.5 and nobody is marked.
+    """
     n = len(values)
     if n == 0:
         return []
     if n == 1:
         return [0.5]
-    order = np.argsort(np.asarray(values, dtype=np.float64), kind="stable")
+    arr = np.asarray(values, dtype=np.float64)
+    order = np.argsort(arr, kind="stable")
+    sorted_vals = arr[order]
     ranks = np.empty(n, dtype=np.float64)
-    ranks[order] = np.arange(n, dtype=np.float64)
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and sorted_vals[j + 1] == sorted_vals[i]:
+            j += 1
+        ranks[order[i : j + 1]] = (i + j) / 2.0
+        i = j + 1
     return list(ranks / (n - 1))
 
 
@@ -189,13 +219,16 @@ def score_run(
             if reasons:
                 row["decision"] = "reject"
             elif group_size <= SMALL_GROUP_MAX:
-                row["decision"] = "select"
-                reasons = ["small group, kept every clean segment"]
+                row["decision"] = "none"
+                reasons = [
+                    f"group of {group_size} too small for percentile calls, "
+                    f"review by hand"
+                ]
             elif comp_p >= select_percentile:
                 row["decision"] = "select"
                 top_pct = max(1, round((1 - comp_p) * 100))
                 reasons = [f"top {top_pct} percent of {klass} segments"]
-            elif comp_p <= reject_percentile:
+            elif comp_p < reject_percentile:
                 row["decision"] = "reject"
                 reasons = [f"bottom decile of {klass} segments"]
             else:

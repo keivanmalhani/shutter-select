@@ -42,16 +42,50 @@ def test_ladder_orders_composites_and_decides():
     assert middle["decision"] == "none" and middle["reasons"] == []
 
 
-def test_small_group_selects_every_clean_take():
-    # The shutter-cull singleton lesson: one clean take must be a Select.
+def test_small_group_makes_no_percentile_calls():
+    # The shutter-cull singleton lesson, applied with the right sign
+    # (2026-08-05 review checkpoint): a tiny group has no comparative
+    # evidence, so nothing is auto-Selected OR auto-Rejected. The old
+    # select-every-clean-segment rule sent a two-file shoot back 100
+    # percent Selected, terrible takes included.
     scored = score_run([make_row()])
-    assert scored[0]["decision"] == "select"
-    assert "small group" in scored[0]["reasons"][0]
+    assert scored[0]["decision"] == "none"
+    assert "too small" in scored[0]["reasons"][0]
 
     # Small group with one hard fail: the fail still rejects.
     scored = score_run([make_row(), make_row(clipped=True)])
-    assert scored[0]["decision"] == "select"
+    assert scored[0]["decision"] == "none"
     assert scored[1]["decision"] == "reject"
+
+
+def test_terrible_lone_take_is_not_endorsed():
+    awful = make_row(
+        noise_margin_db=0.5,
+        silence_ratio=0.9,
+        words_per_second=0.1,
+        sharpness=3.0,
+    )
+    scored = score_run([awful])
+    assert scored[0]["decision"] == "none"
+
+
+def test_identical_rows_share_identical_fate():
+    # Duplicate card import: twelve byte-identical segments must not be
+    # split into selects and rejects by list order (review probe A).
+    scored = score_run([make_row(klass="broll", transcript="", words_per_second=0.0) for _ in range(12)])
+    assert len({row["decision"] for row in scored}) == 1
+    assert len({row["composite"] for row in scored}) == 1
+
+
+def test_tie_ranks_are_averaged():
+    assert percentile_ranks([5.0, 5.0, 9.0]) == [0.25, 0.25, 1.0]
+
+
+def test_bottom_decile_is_a_decile():
+    # 11 strictly ordered rows: exactly the bottom one rejects, not two.
+    scored = score_run(_speech_ladder(11))
+    rejects = [r for r in scored if r["decision"] == "reject"]
+    assert len(rejects) == 1
 
 
 def test_hard_fails_beat_good_composites():
@@ -71,7 +105,8 @@ def test_hard_fails_beat_good_composites():
 def test_clipped_broll_is_not_an_audio_hard_fail():
     rows = [make_row(klass="broll", clipped=True, transcript="", words_per_second=0.0)]
     scored = score_run(rows)
-    assert scored[0]["decision"] == "select"  # small group, clean visually
+    assert scored[0]["decision"] == "none"  # no audio fail, tiny group: undecided
+    assert not any("clipped" in reason for reason in scored[0]["reasons"])
 
 
 def test_undecodable_segment_rejects_in_any_class():
@@ -141,8 +176,13 @@ def test_unknown_profile_raises():
 
 
 def test_custom_thresholds_are_respected():
-    scored = score_run(_speech_ladder(10), select_percentile=0.95, reject_percentile=0.0)
+    scored = score_run(_speech_ladder(10), select_percentile=0.95, reject_percentile=0.05)
     selects = [r for r in scored if r["decision"] == "select"]
     rejects = [r for r in scored if r["decision"] == "reject"]
     assert len(selects) == 1
-    assert len(rejects) == 1  # only the exact bottom (percentile 0.0)
+    assert len(rejects) == 1  # only the exact bottom sits below 0.05
+
+
+def test_zero_reject_percentile_disables_relative_rejects():
+    scored = score_run(_speech_ladder(10), reject_percentile=0.0)
+    assert not any(r["decision"] == "reject" for r in scored)

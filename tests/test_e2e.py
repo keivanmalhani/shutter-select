@@ -69,5 +69,15 @@ def test_real_transcription_end_to_end(tmp_path):
     assert speech_rows, "expected at least one speech take"
 
     analyzed = engine.decide(payloads)
-    decisions = [row["decision"] for _, rows in analyzed for row in rows]
-    assert "select" in decisions
+    scored_rows = [row for _, rows in analyzed for row in rows]
+    # A one-file shoot is a tiny group: the engine must not auto-endorse
+    # or auto-condemn anything without comparative evidence. What it must
+    # do is score every segment and say why it stayed undecided.
+    assert scored_rows
+    for row in scored_rows:
+        assert row["decision"] in ("none", "reject")
+        assert "composite" in row
+        if row["decision"] == "none":
+            assert any("too small" in reason for reason in row["reasons"])
+        else:  # a reject here can only be a hard fail
+            assert row["hard_fail"]
