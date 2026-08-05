@@ -123,7 +123,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-56 unit tests, no committed media fixtures: test footage is synthesized with ffmpeg at run time. One end-to-end test runs real whisper transcription behind `-m integration` and stays out of CI. CI runs Python 3.11 and 3.12 with ffmpeg installed.
+61 unit tests, no committed media fixtures: test footage is synthesized with ffmpeg at run time. One end-to-end test runs real whisper transcription behind `-m integration` and stays out of CI. CI runs Python 3.11 and 3.12 with ffmpeg installed.
 
 ## Family
 

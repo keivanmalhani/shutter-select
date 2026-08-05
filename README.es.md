@@ -123,7 +123,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-56 pruebas unitarias, sin material binario en el repo: el video de prueba se sintetiza con ffmpeg al momento. Una prueba de extremo a extremo corre transcripcion real detras de `-m integration` y queda fuera de CI. CI corre Python 3.11 y 3.12 con ffmpeg instalado.
+61 pruebas unitarias, sin material binario en el repo: el video de prueba se sintetiza con ffmpeg al momento. Una prueba de extremo a extremo corre transcripcion real detras de `-m integration` y queda fuera de CI. CI corre Python 3.11 y 3.12 con ffmpeg instalado.
 
 ## Familia
 
