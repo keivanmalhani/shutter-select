@@ -40,7 +40,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/shutter_select"]
 
+# The suite imports helpers as `from tests.conftest import ...`, which needs the
+# repo root on sys.path. `python -m pytest` adds the current directory for you
+# and the bare `pytest` console script does not, so the suite passed locally and
+# failed in CI with eight collection errors and exit code 2. Setting it here
+# means both invocations behave the same and nobody has to remember which one
+# they typed.
 [tool.pytest.ini_options]
+pythonpath = ["."]
 markers = [
     "integration: slow tests that run real transcription, excluded in CI",
 ]
