@@ -5,19 +5,28 @@ Subcommands:
   analyze  full engine, writes one cache JSON per source file
   emit     timelines, transcripts, report from cache, re-runnable freely
   run      analyze then emit, the one-shot
+  doctor   will scan/analyze/run actually work here
 
 Sources are only ever opened read-only. Every write lands under the out
 directory (default <root>/_selects). The only network access the tool can
 ever perform is the explicit, opt-in --allow-download model fetch.
+
+doctor is the one to run first, and the one to ask for when someone reports
+that a run did nothing. It reports every problem it finds in one pass with
+the command that fixes each, and is deliberately the one subcommand that
+does not call require_binaries() itself before running: doctor's whole job
+is to check that condition (and every other one) without dying on the
+first missing thing. See doctor.py for the checks themselves.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from shutter_select import __version__, engine
+from shutter_select import __version__, doctor, engine
 from shutter_select.faces import ModelNotAvailable
 from shutter_select.probe import ProbeError, probe, require_binaries
 from shutter_select.report import build_report, write_report
@@ -186,6 +195,48 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return _cmd_emit(args)
 
 
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """doctor command: every check in one pass, never stop at the first
+    failure. Exit 0 if a real scan/analyze/run would work here, 1 if it
+    would not.
+
+    Deliberately does not bail out when the root is wrong: a person running
+    doctor wants every problem at once, not the first one."""
+    root: Path | None = None
+    if args.root:
+        candidate = Path(args.root).expanduser()
+        root = candidate.resolve() if candidate.exists() else candidate
+
+    ctx = doctor.Context(root=root, model=args.model)
+    checks = doctor.run_checks(ctx)
+    workable, summary = doctor.verdict(checks)
+
+    if args.json:
+        for check in checks:
+            print(
+                json.dumps(
+                    {
+                        "event": "doctor_check",
+                        "check": check.name,
+                        "status": check.status,
+                        "detail": check.detail,
+                        "fix": check.fix,
+                    }
+                )
+            )
+        print(
+            json.dumps(
+                {"event": "doctor_verdict", "workable": workable, "summary": summary}
+            )
+        )
+    else:
+        if not args.root:
+            print("No root given, checking tools and this machine only.\n")
+        print(doctor.render(checks))
+
+    return 0 if workable else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="shutter-select",
@@ -218,6 +269,29 @@ def build_parser() -> argparse.ArgumentParser:
     _add_emit_flags(p_run)
     p_run.set_defaults(func=_cmd_run)
 
+    p_doctor = sub.add_parser(
+        "doctor", help="check this machine before trusting it with a run"
+    )
+    p_doctor.add_argument(
+        "root",
+        nargs="?",
+        default=None,
+        help="Footage folder to check readability of. Omit to check only "
+        "the tools and this machine.",
+    )
+    p_doctor.add_argument(
+        "--model",
+        default="small",
+        choices=sorted(doctor.WHISPER_REPOS),
+        help="Whisper model size to check the cache state of (default: small)",
+    )
+    p_doctor.add_argument(
+        "--json",
+        action="store_true",
+        help="One JSON object per check, for a probe rather than a person.",
+    )
+    p_doctor.set_defaults(func=_cmd_doctor)
+
     return parser
 
 
@@ -225,7 +299,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        require_binaries()
+        if args.command != "doctor":
+            require_binaries()
         return args.func(args)
     except (PathAccessError, ProbeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
