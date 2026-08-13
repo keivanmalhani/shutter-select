@@ -8,7 +8,7 @@ English | [Espanol](README.es.md)
 
 ![shutter-select demo: one command turns a footage folder into a picked, explained, editor-ready selects timeline](docs/demo.gif)
 
-A local-first video culling engine. Point it at a folder of raw footage: it transcribes every word spoken, finds the takes, flags dead-quiet and clipped audio, scores sharpness, exposure, and motion, picks the strongest takes and b-roll, and hands your editor a ready-made selects timeline with color markers, plus SRT subtitles of everything said. Nothing ever leaves your machine.
+Point it at a folder of raw footage. It transcribes every word spoken, finds where each take starts and ends, and flags the ones with dead-quiet or clipped audio before it bothers scoring anything. What's left gets scored for sharpness, exposure and motion, and the strongest takes and b-roll come out the other end as a selects timeline with color markers, plus SRT subtitles for the whole shoot. Your footage stays on your drive the entire time; the CPU doing the work is yours.
 
 ## Why this exists
 
