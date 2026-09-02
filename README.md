@@ -4,8 +4,6 @@
 ![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 
-English | [Espanol](README.es.md)
-
 ![shutter-select demo: one command turns a footage folder into a picked, explained, editor-ready selects timeline](docs/demo.gif)
 
 Point it at a folder of raw footage. It transcribes every word spoken, finds where each take starts and ends, and flags the ones with dead-quiet or clipped audio before it bothers scoring anything. What's left gets scored for sharpness, exposure and motion, and the strongest takes and b-roll come out the other end as a selects timeline with color markers, plus SRT subtitles for the whole shoot. Your footage stays on your drive the entire time; the CPU doing the work is yours.
