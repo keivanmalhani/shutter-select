@@ -56,3 +56,21 @@ def test_discover_does_not_follow_symlinks_outside_root(tmp_path):
 
     found = discover(resolve_root(str(inside)))
     assert [p.name for p in found] == ["ok.mp4"]
+
+
+def test_a_symlink_escaping_the_root_is_not_walked_in(tmp_path):
+    """The discover() docstring: "any file whose resolved location escapes the root is
+    skipped, so a stray symlink inside the shoot folder can never pull outside footage
+    into the run." Nothing tested it. Deleting the check left all 97 tests green while
+    the walk started returning footage from outside the shoot.
+
+    Added 2026-09-02 after a mutation sweep.
+    """
+    root = tmp_path / "shoot"
+    outside = tmp_path / "elsewhere"
+    _touch(root / "mine.mp4")
+    _touch(outside / "not_mine.mp4")
+    (root / "linked.mp4").symlink_to(outside / "not_mine.mp4")
+
+    found = [p.name for p in discover(root.resolve())]
+    assert found == ["mine.mp4"]

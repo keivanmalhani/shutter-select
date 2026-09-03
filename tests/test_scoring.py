@@ -186,3 +186,125 @@ def test_custom_thresholds_are_respected():
 def test_zero_reject_percentile_disables_relative_rejects():
     scored = score_run(_speech_ladder(10), reject_percentile=0.0)
     assert not any(r["decision"] == "reject" for r in scored)
+
+
+# ---------------------------------------------------------------------------
+# Boundary cases added 2026-09-02 after a mutation sweep. 26 defects were planted
+# across scoring, segments, walk and cache; 15 left all 97 tests green, and 12 of
+# those changed behaviour a user would see. The ones below are those 12, in scoring.
+
+
+def _broll_ladder(n: int) -> list[dict]:
+    """n b-roll rows, strictly increasing on the two features broll weights lean on."""
+    return [
+        make_row(index=i, klass="broll", sharpness=100.0 + 10 * i, motion=0.01 * (i + 1))
+        for i in range(n)
+    ]
+
+
+def test_a_segment_exactly_on_the_select_percentile_is_selected():
+    """SELECT_PERCENTILE is 0.60 and the rule reads `comp_p >= select_percentile`.
+
+    Six segments rank at exactly 0.0, 0.2, 0.4, 0.6, 0.8, 1.0, so the fourth sits on
+    the threshold. Flipping the comparison to `>` demotes it to unmarked and every
+    test passed: no test ever produced a composite percentile equal to the threshold.
+    """
+    scored = score_run(_broll_ladder(6))
+    percentiles = [row["composite_percentile"] for row in scored]
+    assert percentiles == [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    assert scored[3]["decision"] == "select"
+    assert scored[2]["decision"] == "none"  # the neighbour below must stay unmarked
+
+
+def test_a_group_of_exactly_small_group_max_makes_no_percentile_calls():
+    """SMALL_GROUP_MAX is 3 and the rule reads `group_size <= SMALL_GROUP_MAX`.
+
+    The existing small-group test uses groups of 1 and 2. At exactly 3, narrowing the
+    comparison to `<` turns a three-clip shoot into one reject, one unmarked and one
+    select - the 2026-08-05 failure this rule exists to prevent, at the one size
+    nothing covered.
+    """
+    scored = score_run(_broll_ladder(3))
+    assert [row["decision"] for row in scored] == ["none", "none", "none"]
+    assert all("too small" in row["reasons"][0] for row in scored)
+
+    # One more segment and the percentile calls come back: the negative half.
+    scored = score_run(_broll_ladder(4))
+    assert [row["decision"] for row in scored] != ["none", "none", "none"]
+
+
+def test_the_softest_frames_fail_in_a_group_of_exactly_the_minimum():
+    """SHARPNESS_FAIL_MIN_GROUP is 50 and the rule reads `group_size >= ...`.
+
+    A run of exactly 50 segments is an ordinary card. With `>` the softest segment
+    stops being called out and nothing notices.
+    """
+    scored = score_run(_broll_ladder(50))
+    failed = [row for row in scored if row["hard_fail"]]
+    assert len(failed) == 1
+    assert "softest frames" in failed[0]["reasons"][0]
+
+    # 49 is below the minimum, so no sharpness fail: the negative half.
+    assert not any(row["hard_fail"] for row in score_run(_broll_ladder(49)))
+
+
+def test_a_sharpness_rank_exactly_on_the_fail_percentile_still_fails():
+    """SHARPNESS_FAIL_PERCENTILE is 0.02 and the rule reads `<= ...`.
+
+    With 51 segments the ranks are k/50, so the second-softest lands on exactly 0.02.
+    Narrowing to `<` drops it from two hard fails to one and re-labels it as an
+    ordinary bottom-decile reject.
+    """
+    scored = score_run(_broll_ladder(51))
+    failed = [row for row in scored if row["hard_fail"]]
+    assert len(failed) == 2
+    assert all("softest frames" in row["reasons"][0] for row in failed)
+
+
+def test_speech_exactly_at_the_quiet_threshold_is_not_a_hard_fail():
+    """MIN_SPEECH_RMS_DB is -35.0 and the rule reads `rms_db < min_speech_rms_db`.
+
+    A take sitting exactly on the floor is usable; only below it is not. Widening to
+    `<=` fails all six takes here, and the suite could not see it because no test ever
+    put rms_db on the threshold.
+    """
+    scored = score_run([make_row(index=i, rms_db=-35.0) for i in range(6)])
+    assert not any(row["hard_fail"] for row in scored)
+
+    # A tenth of a dB under and it does fail: the negative half.
+    scored = score_run([make_row(index=i, rms_db=-35.1) for i in range(6)])
+    assert all(row["hard_fail"] for row in scored)
+    assert all("too quiet" in row["reasons"][0] for row in scored)
+
+
+def test_blown_highlights_cost_more_than_crushed_shadows():
+    """_exposure_quality weights crushed at 3x and blown at 4x: clipped highlights are
+    unrecoverable, crushed shadows often are not. Swapping the two constants left every
+    test green, because no test has both fractions non-zero and unequal, so nothing
+    pins which one is worse."""
+    from shutter_select.scoring import _exposure_quality
+
+    crushed = _exposure_quality({"crushed_frac": 0.2, "blown_frac": 0.0})
+    blown = _exposure_quality({"crushed_frac": 0.0, "blown_frac": 0.2})
+    assert crushed == pytest.approx(0.4)
+    assert blown == pytest.approx(0.2)
+    assert blown < crushed
+
+    # And it reaches the decision: same fraction of bad pixels, blown ranks lower.
+    rows = [make_row(index=i, crushed_frac=0.2, blown_frac=0.0) for i in range(3)]
+    rows += [make_row(index=3 + i, crushed_frac=0.0, blown_frac=0.2) for i in range(3)]
+    scored = score_run(rows)
+    assert scored[0]["composite"] > scored[3]["composite"]
+
+
+def test_silence_costs_twenty_db_of_noise_margin():
+    """_audio_quality_raw is `noise_margin_db - 20 * silence_ratio`. Halving that
+    coefficient reversed the ranking of these two takes and every test passed,
+    because no test has two rows differing on both terms at once."""
+    quiet_but_full = make_row(index=0, noise_margin_db=12.0, silence_ratio=0.0)
+    cleaner_but_half_silent = make_row(index=1, noise_margin_db=20.0, silence_ratio=0.5)
+    filler = [make_row(index=i, noise_margin_db=30.0, silence_ratio=0.0) for i in range(2, 6)]
+    scored = score_run([quiet_but_full, cleaner_but_half_silent, *filler])
+    assert scored[0]["composite"] > scored[1]["composite"], (
+        "half a take of silence must cost more than the 8 dB of noise margin it buys"
+    )

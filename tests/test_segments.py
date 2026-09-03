@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from shutter_select.segments import Segment, build_segments, group_takes
+from shutter_select.segments import (
+    Segment,
+    _split_region,
+    build_segments,
+    group_takes,
+)
 from shutter_select.transcribe import SpeechSpan
 
 
@@ -77,3 +82,59 @@ def test_tiny_gap_between_takes_produces_no_sliver_segment():
 def test_words_per_second_property():
     seg = Segment(index=0, t_in=0.0, t_out=10.0, klass="speech", transcript="one two three four")
     assert seg.words_per_second == 0.4
+
+
+# ---------------------------------------------------------------------------
+# Boundary cases added 2026-09-02 after a mutation sweep. Four defects in this module
+# left all 97 tests green while changing behaviour a user would see.
+
+
+def test_a_gap_of_exactly_gap_seconds_splits_the_take():
+    """group_takes joins while `span.start - previous.end < gap`, so a gap of exactly
+    GAP_SECONDS splits. The existing test uses gaps of 1.0 and 3.0, either side of the
+    1.5 default and never on it, so widening the comparison to `<=` - which glues two
+    separate takes into one - passed every test."""
+    spans = [span(0.0, 1.0), span(2.5, 3.5)]  # gap is exactly 1.5
+    takes = group_takes(spans, duration=10.0, gap=1.5)
+    assert len(takes) == 2
+
+    # A hair under and they do join: the negative half.
+    spans = [span(0.0, 1.0), span(2.49, 3.5)]
+    assert len(group_takes(spans, duration=10.0, gap=1.5)) == 1
+
+
+def test_speech_covering_exactly_half_a_segment_is_a_speech_take():
+    """The module docstring: speech when speech covers AT LEAST half the segment. The
+    rule reads `ratio >= 0.5`. One 1.0 s span padded 0.5 s either side is a 2.0 s take
+    that is exactly half speech; narrowing to `> 0.5` reclassifies it as b-roll, which
+    silently swaps the whole weight table used to score it."""
+    spans = [span(1.0, 2.0, "one line")]
+    segments = build_segments(spans, [], duration=10.0, pad=0.5)
+    take = [s for s in segments if s.transcript][0]
+    assert take.speech_ratio == 0.5
+    assert take.klass == "speech"
+
+    # A shade less speech in the same take and it is b-roll: the negative half.
+    spans = [span(1.0, 1.9, "one line")]
+    segments = build_segments(spans, [], duration=10.0, pad=0.5)
+    take = [s for s in segments if s.transcript][0]
+    assert take.speech_ratio < 0.5 and take.klass == "broll"
+
+
+def test_a_region_of_exactly_min_region_seconds_still_produces_a_segment():
+    """_split_region drops a region shorter than MIN_REGION_SECONDS, so one of exactly
+    0.5 s is kept. Widening that to `<=` throws it away and every test passed."""
+    assert _split_region(0.0, 0.5, []) == [(0.0, 0.5)]
+    # A hair shorter and it is dropped: the negative half.
+    assert _split_region(0.0, 0.49, []) == []
+
+
+def test_a_piece_of_exactly_min_broll_seconds_is_not_merged_away():
+    """Slivers shorter than MIN_BROLL_SECONDS are folded into the piece before them.
+    A piece of exactly 1.0 s is not a sliver and must stand on its own. Widening the
+    test to `<=` merges it into its neighbour, and no test noticed because every
+    existing case is well clear of 1.0 s."""
+    # cuts at 2.0 and 3.0 carve 0..5 into 2.0 / 1.0 / 2.0
+    assert _split_region(0.0, 5.0, [2.0, 3.0]) == [(0.0, 2.0), (2.0, 3.0), (3.0, 5.0)]
+    # a 0.9 s middle piece IS a sliver and does get merged: the negative half.
+    assert _split_region(0.0, 5.0, [2.0, 2.9]) == [(0.0, 2.9), (2.9, 5.0)]
